@@ -1,0 +1,112 @@
+[
+  {
+    "report_id": "IND-001",
+    "report_type": "指标类",
+    "report_subtype": "血常规",
+    "content": {
+      "描述": "患者男，35岁，常规体检。",
+      "检查所见": "白细胞计数6.2 10^9/L，红细胞计数5.0 10^12/L，血红蛋白145 g/L。",
+      "检查提示": "血常规指标均正常。"
+    },
+    "label": "正常"
+  },
+  {
+    "report_id": "IND-002",
+    "report_type": "指标类",
+    "report_subtype": "生化",
+    "content": {
+      "描述": "患者女，42岁，年度体检。",
+      "检查所见": "血糖5.2 mmol/L。",
+      "检查提示": "生化指标在正常范围。"
+    },
+    "label": "正常"
+  },
+  {
+    "report_id": "IMG-001",
+    "report_type": "影像类",
+    "report_subtype": "CT",
+    "content": {
+      "描述": "胸部CT平扫。",
+      "检查所见": "双肺纹理清晰，未见明显结节或渗出。",
+      "检查提示": "胸部CT未见明显异常。"
+    },
+    "label": "正常"
+  },
+  {
+    "report_id": "IMG-002",
+    "report_type": "影像类",
+    "report_subtype": "MRI",
+    "content": {
+      "描述": "头颅MRI检查。",
+      "检查所见": "脑实质信号均匀，未见急性梗死灶。",
+      "检查提示": "头颅MRI未见异常。"
+    },
+    "label": "正常"
+  },
+  {
+    "report_id": "IND-003",
+    "report_type": "指标类",
+    "report_subtype": "血常规",
+    "content": {
+      "描述": "患者男，51岁，复查。",
+      "检查所见": "白细胞计数7.0 10^9/L。",
+      "检查提示": ""
+    },
+    "label": "缺失"
+  },
+  {
+    "report_id": "IND-004",
+    "report_type": "指标类",
+    "report_subtype": "生化",
+    "content": {
+      "描述": "",
+      "检查所见": "血糖6.0 mmol/L。",
+      "检查提示": "血糖接近上限，建议随访。"
+    },
+    "label": "缺失"
+  },
+  {
+    "report_id": "IMG-003",
+    "report_type": "影像类",
+    "report_subtype": "CT",
+    "content": {
+      "描述": "腹部CT增强。",
+      "检查所见": "",
+      "检查提示": "建议结合临床。"
+    },
+    "label": "缺失"
+  },
+  {
+    "report_id": "IMG-004",
+    "report_type": "影像类",
+    "report_subtype": "MRI",
+    "content": {
+      "描述": "腰椎MRI检查。",
+      "检查所见": "椎体序列齐，未见明显占位。",
+      "检查提示": ""
+    },
+    "label": "缺失"
+  },
+  {
+    "report_id": "IND-005",
+    "report_type": "指标类",
+    "report_subtype": "血常规",
+    "content": {
+      "描述": "患者男，50岁，高血压。",
+      "检查所见": "白细胞计数11.5 10^9/L，红细胞计数5.1 10^12/L。",
+      "检查提示": "血常规指标均正常。"
+    },
+    "label": "矛盾"
+  },
+  {
+    "report_id": "IMG-005",
+    "report_type": "影像类",
+    "report_subtype": "CT",
+    "content": {
+      "描述": "胸部CT复查。",
+      "检查所见": "双肺未见明显异常。",
+      "检查提示": "提示右肺结节，建议进一步检查。"
+    },
+    "label": "矛盾"
+  }
+]

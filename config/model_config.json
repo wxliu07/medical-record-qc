@@ -1,0 +1,15 @@
+{
+  "llm": {
+    "provider": "litellm",
+    "model": "deepseek/deepseek-chat",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key_env": "DEEPSEEK_API_KEY",
+    "enable_reasoning_qc": true
+  },
+  "radgraph": {
+    "enabled": true,
+    "fallback_enabled": true,
+    "backend": "radgraph",
+    "notes": "If radgraph is unavailable, fallback parser will be used."
+  }
+}

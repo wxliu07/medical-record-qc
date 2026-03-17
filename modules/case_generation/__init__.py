@@ -1,0 +1,2 @@
+from .medical_record import generate_standard_medical_record
+from .physical_summary import generate_physical_summary
