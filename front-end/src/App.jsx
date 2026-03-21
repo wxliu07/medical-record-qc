@@ -83,7 +83,7 @@ export default function App() {
           if (eventType === 'step_complete' || eventType === 'step_error') {
             setSteps(prev => [...prev, data])
           } else if (eventType === 'done') {
-            setSummary(data)
+            setSummary(data.summary)
           }
         } catch (e) {
           console.error('JSON parse error:', e, jsonData)
