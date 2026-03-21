@@ -49,34 +49,44 @@ export default function App() {
 
       while (true) {
         const { done, value } = await reader.read()
+
+        // Decode this chunk (final chunk when done=true)
+        if (value) {
+          buffer += decoder.decode(value, { stream: !done })
+        }
+
         if (done) break
+      }
 
-        buffer += decoder.decode(value, { stream: true })
+      // Process all complete SSE messages in buffer
+      // Each message format: "event: TYPE\ndata: JSON\n\n"
+      const messages = buffer.split(/\n\n/)
+      for (const rawMsg of messages) {
+        if (!rawMsg.trim()) continue
 
-        // Process complete SSE messages (event: X\ndata: Y\n\n)
-        while (buffer.includes('\n\n')) {
-          const msgEnd = buffer.indexOf('\n\n')
-          const message = buffer.slice(0, msgEnd)
-          buffer = buffer.slice(msgEnd + 2)
+        const lines = rawMsg.split('\n')
+        let eventType = currentEvent
+        let jsonData = ''
 
-          const eventMatch = message.match(/^event: ([^\n]+)\n/)
-          const dataMatch = message.match(/^data: (.+)$/s)  // /s makes . match newlines
-
-          if (eventMatch) {
-            currentEvent = eventMatch[1].trim()
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim()
+          } else if (line.startsWith('data: ')) {
+            jsonData = line.slice(6)
           }
-          if (dataMatch && currentEvent) {
-            const data = JSON.parse(dataMatch[1])
-            if (currentEvent === 'step_complete') {
-              setSteps(prev => [...prev, data])
-            } else if (currentEvent === 'step_error') {
-              setSteps(prev => [...prev, data])
-            } else if (currentEvent === 'start') {
-              // start event - data has {total: N}
-            } else if (currentEvent === 'done') {
-              setSummary(data)
-            }
+        }
+
+        if (!eventType || !jsonData) continue
+
+        try {
+          const data = JSON.parse(jsonData)
+          if (eventType === 'step_complete' || eventType === 'step_error') {
+            setSteps(prev => [...prev, data])
+          } else if (eventType === 'done') {
+            setSummary(data)
           }
+        } catch (e) {
+          console.error('JSON parse error:', e, jsonData)
         }
       }
     } catch (e) {
