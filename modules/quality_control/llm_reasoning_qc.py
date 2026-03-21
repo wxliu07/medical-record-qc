@@ -3,6 +3,67 @@ import os
 from typing import Any, Dict, List
 
 
+def _parse_llm_json(content: str) -> Dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Some responses may include extra prose before/after JSON; try to recover the first object block.
+        left = text.find("{")
+        right = text.rfind("}")
+        if left != -1 and right != -1 and right > left:
+            return json.loads(text[left : right + 1])
+        raise
+
+
+def _extract_frame_content(frame: Any) -> str:
+    for attr in ["gen_text", "generated_text", "output", "content"]:
+        value = getattr(frame, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    if hasattr(frame, "get_generated_text"):
+        try:
+            value = frame.get_generated_text()
+            if isinstance(value, str) and value.strip():
+                return value
+        except Exception:
+            pass
+
+    if hasattr(frame, "frame") and isinstance(getattr(frame, "frame", None), dict):
+        return json.dumps(frame.frame, ensure_ascii=False)
+
+    if hasattr(frame, "data") and isinstance(getattr(frame, "data", None), dict):
+        return json.dumps(frame.data, ensure_ascii=False)
+
+    return str(frame)
+
+
+def _rule_reasoning_fallback(rule_issues: List[Dict[str, Any]], cause: str) -> Dict[str, Any]:
+    if rule_issues:
+        first = rule_issues[0]
+        message = str(first.get("message", "存在规则质控问题")).strip()
+        return {
+            "result": "error",
+            "reason": f"rule fallback: {message}; cause={cause}",
+            "source": "rule_fallback",
+        }
+
+    return {
+        "result": "correct",
+        "reason": f"rule fallback: no issues; cause={cause}",
+        "source": "rule_fallback",
+    }
+
+
 def run_llm_reasoning_qc(
     report: Dict[str, Any],
     extraction: Dict[str, Any],
@@ -10,99 +71,78 @@ def run_llm_reasoning_qc(
     model_config: Dict[str, Any],
 ) -> Dict[str, Any]:
     llm_cfg = model_config.get("llm", {})
-    if not llm_cfg.get("enable_reasoning_qc", True):
+
+    # Fast path: for clean reports, avoid network/model calls to reduce blocking risk.
+    if not rule_issues and llm_cfg.get("reasoning_on_clean_reports", False) is False:
         return {
-            "result": "unknown",
-            "reason": "reasoning qc disabled by config",
-            "source": "config",
+            "result": "correct",
+            "reason": "rule fastpath: no issues",
+            "source": "rule_fastpath",
         }
+
+    if not llm_cfg.get("enable_reasoning_qc", True):
+        return _rule_reasoning_fallback(rule_issues, "reasoning qc disabled by config")
 
     api_key = os.getenv(llm_cfg.get("api_key_env", "DEEPSEEK_API_KEY"), "")
     if not api_key:
-        return {
-            "result": "unknown",
-            "reason": "missing DEEPSEEK_API_KEY",
-            "source": "fallback",
-        }
+        return _rule_reasoning_fallback(rule_issues, "missing DEEPSEEK_API_KEY")
 
     try:
         from llm_ie.chunkers import SentenceUnitChunker
         from llm_ie.engines import LiteLLMInferenceEngine
         from llm_ie.extractors import DirectFrameExtractor
     except Exception as exc:
-        return {
-            "result": "unknown",
-            "reason": f"llm-ie unavailable: {exc}",
-            "source": "fallback",
-        }
+        return _rule_reasoning_fallback(rule_issues, f"llm-ie unavailable: {exc}")
 
-    prompt = f"""
-你是医疗报告质控复核助手。基于已有抽取与规则问题，判断当前结论是否合理。
-请输出严格JSON：
-{{
+        prompt = """
+你是医疗报告质控复核助手。请基于输入信息判断当前结论是否合理。
+仅输出严格 JSON，不要附加任何解释文本：
+{
   "result": "correct 或 error",
   "reason": "简要原因"
-}}
+}
 
-报告：
-{json.dumps(report, ensure_ascii=False)}
-
-抽取结果：
-{json.dumps(extraction, ensure_ascii=False)}
-
-规则问题：
-{json.dumps(rule_issues, ensure_ascii=False)}
+输入信息如下：
+{{text}}
 """
+
+    reasoning_input = json.dumps(
+        {
+            "report": report,
+            "extraction": extraction,
+            "rule_issues": rule_issues,
+        },
+        ensure_ascii=False,
+    )
 
     try:
         engine = LiteLLMInferenceEngine(
             model=llm_cfg.get("model", "deepseek/deepseek-chat"),
             api_key=api_key,
             base_url=llm_cfg.get("base_url", "https://api.deepseek.com/v1"),
+            timeout=float(llm_cfg.get("timeout", 20)),
         )
         extractor = DirectFrameExtractor(
             inference_engine=engine,
             unit_chunker=SentenceUnitChunker(),
             prompt_template=prompt,
         )
-        frames = extractor.extract("")
+        # llm-ie requires one placeholder in prompt when text_content is a string.
+        frames = extractor.extract(reasoning_input)
         if not frames:
-            return {"result": "unknown", "reason": "llm returned empty frames", "source": "llm_ie"}
+            return _rule_reasoning_fallback(rule_issues, "llm returned empty frames")
 
         frame = frames[0]
-        content = None
-        for attr in ["gen_text", "generated_text", "output", "content"]:
-            value = getattr(frame, attr, None)
-            if isinstance(value, str) and value.strip():
-                content = value
-                break
-        if content is None and hasattr(frame, "get_generated_text"):
-            try:
-                content = frame.get_generated_text()
-            except Exception:
-                content = None
+        content = _extract_frame_content(frame)
 
-        if content is None:
-            content = str(frame)
-
-        text = content.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-
-        result = json.loads(text.strip())
+        result = _parse_llm_json(content)
         if "result" not in result:
-            result["result"] = "unknown"
+            result["result"] = "error" if rule_issues else "correct"
         if "reason" not in result:
             result["reason"] = "llm response missing reason"
         result["source"] = "llm_ie"
         return result
+    except json.JSONDecodeError:
+        return _rule_reasoning_fallback(rule_issues, "llm response not valid json")
     except Exception as exc:
-        return {
-            "result": "unknown",
-            "reason": f"llm reasoning failed: {exc}",
-            "source": "fallback",
-        }
+        return _rule_reasoning_fallback(rule_issues, f"llm reasoning failed: {type(exc).__name__}")

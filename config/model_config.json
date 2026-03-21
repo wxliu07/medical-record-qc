@@ -9,6 +9,7 @@
   "radgraph": {
     "enabled": true,
     "fallback_enabled": true,
+    "model_type": "radgraph-xl",
     "backend": "radgraph",
     "notes": "If radgraph is unavailable, fallback parser will be used."
   }

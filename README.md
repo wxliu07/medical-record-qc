@@ -50,11 +50,14 @@ electronic-record/
 
 ```bash
 pip install llm-ie
+https://github.com/daviden1013/llm-ie
+https://github.com/quqxui/Awesome-LLM4IE-Papers
 ```
 
 可选影像解析：
 ```bash
 pip install radgraph
+https://github.com/Stanford-AIMI/radgraph
 ```
 
 ## 环境变量

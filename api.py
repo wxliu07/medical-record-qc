@@ -35,8 +35,8 @@ def _load_env_file():
             os.environ[key] = value
 
 
-def _stream_event(event_type: str, data: Dict[str, Any]):
-    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+async def _stream_event(event_type: str, data: Dict[str, Any]) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 async def run_pipeline_stream(reports: List[Dict[str, Any]]):
@@ -55,7 +55,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         llm_cfg["base_url"] = os.getenv("DEEPSEEK_BASE_URL", "").strip()
 
     total = 6 * len(reports) + 1  # steps per report + start
-    yield _stream_event("start", {"total": total})
+    yield await _stream_event("start", {"total": total})
 
     step_num = 0
     graded_records = []
@@ -65,7 +65,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
     for report in reports:
         # Step: Load (already validated)
         step_num += 1
-        yield _stream_event("step_complete", {
+        yield await _stream_event("step_complete", {
             "step": "load",
             "step_num": step_num,
             "report_id": report.get("report_id"),
@@ -78,7 +78,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         step_num += 1
         try:
             extraction = extract_by_report_type(report, qc_rules, model_config)
-            yield _stream_event("step_complete", {
+            yield await _stream_event("step_complete", {
                 "step": "ner_re",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -87,7 +87,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": extraction,
             })
         except Exception as e:
-            yield _stream_event("step_error", {
+            yield await _stream_event("step_error", {
                 "step": "ner_re",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -100,7 +100,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         step_num += 1
         try:
             rule_issues = run_rule_based_qc(report, extraction, qc_rules)
-            yield _stream_event("step_complete", {
+            yield await _stream_event("step_complete", {
                 "step": "rule_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -109,7 +109,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": {"rule_issues": rule_issues},
             })
         except Exception as e:
-            yield _stream_event("step_error", {
+            yield await _stream_event("step_error", {
                 "step": "rule_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -122,7 +122,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         step_num += 1
         try:
             reasoning = run_llm_reasoning_qc(report, extraction, rule_issues, model_config)
-            yield _stream_event("step_complete", {
+            yield await _stream_event("step_complete", {
                 "step": "llm_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -131,7 +131,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": reasoning,
             })
         except Exception as e:
-            yield _stream_event("step_error", {
+            yield await _stream_event("step_error", {
                 "step": "llm_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -145,7 +145,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         try:
             graded = build_graded_record(report, extraction, rule_issues, reasoning)
             graded_records.append(graded)
-            yield _stream_event("step_complete", {
+            yield await _stream_event("step_complete", {
                 "step": "grade",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -154,7 +154,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": graded,
             })
         except Exception as e:
-            yield _stream_event("step_error", {
+            yield await _stream_event("step_error", {
                 "step": "grade",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -170,7 +170,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
             med_record = generate_standard_medical_record(graded, corrected=False)
             all_summaries.append({"report_id": report["report_id"], **summary})
             all_records.append({"report_id": report["report_id"], **med_record})
-            yield _stream_event("step_complete", {
+            yield await _stream_event("step_complete", {
                 "step": "generate",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -179,7 +179,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": {"physical_summary": summary, "medical_record": med_record},
             })
         except Exception as e:
-            yield _stream_event("step_error", {
+            yield await _stream_event("step_error", {
                 "step": "generate",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -189,7 +189,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
 
     # Done
     graded_dataset = aggregate_grade_dataset(graded_records)
-    yield _stream_event("done", {
+    yield await _stream_event("done", {
         "summary": graded_dataset["summary"],
         "total_reports": len(reports),
         "degraded_count": sum(1 for r in graded_records if r.get("extraction", {}).get("degraded")),

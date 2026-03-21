@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 import json
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -89,7 +89,7 @@ def _load_env_file():
             os.environ[key] = value
 
 
-async def _stream_event(event_type: str, data: Dict[str, Any]):
+def _stream_event(event_type: str, data: Dict[str, Any]):
     yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -109,7 +109,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         llm_cfg["base_url"] = os.getenv("DEEPSEEK_BASE_URL", "").strip()
 
     total = 6 * len(reports) + 1  # steps per report + start
-    yield await _stream_event("start", {"total": total})
+    yield _stream_event("start", {"total": total})
 
     step_num = 0
     graded_records = []
@@ -119,7 +119,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
     for report in reports:
         # Step: Load (already validated)
         step_num += 1
-        yield await _stream_event("step", {
+        yield _stream_event("step_complete", {
             "step": "load",
             "step_num": step_num,
             "report_id": report.get("report_id"),
@@ -132,7 +132,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         step_num += 1
         try:
             extraction = extract_by_report_type(report, qc_rules, model_config)
-            yield await _stream_event("step", {
+            yield _stream_event("step_complete", {
                 "step": "ner_re",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -141,7 +141,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": extraction,
             })
         except Exception as e:
-            yield await _stream_event("step", {
+            yield _stream_event("step_error", {
                 "step": "ner_re",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -154,7 +154,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         step_num += 1
         try:
             rule_issues = run_rule_based_qc(report, extraction, qc_rules)
-            yield await _stream_event("step", {
+            yield _stream_event("step_complete", {
                 "step": "rule_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -163,7 +163,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": {"rule_issues": rule_issues},
             })
         except Exception as e:
-            yield await _stream_event("step", {
+            yield _stream_event("step_error", {
                 "step": "rule_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -176,7 +176,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         step_num += 1
         try:
             reasoning = run_llm_reasoning_qc(report, extraction, rule_issues, model_config)
-            yield await _stream_event("step", {
+            yield _stream_event("step_complete", {
                 "step": "llm_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -185,7 +185,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": reasoning,
             })
         except Exception as e:
-            yield await _stream_event("step", {
+            yield _stream_event("step_error", {
                 "step": "llm_qc",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -199,7 +199,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
         try:
             graded = build_graded_record(report, extraction, rule_issues, reasoning)
             graded_records.append(graded)
-            yield await _stream_event("step", {
+            yield _stream_event("step_complete", {
                 "step": "grade",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -208,7 +208,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": graded,
             })
         except Exception as e:
-            yield await _stream_event("step", {
+            yield _stream_event("step_error", {
                 "step": "grade",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -224,7 +224,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
             med_record = generate_standard_medical_record(graded, corrected=False)
             all_summaries.append({"report_id": report["report_id"], **summary})
             all_records.append({"report_id": report["report_id"], **med_record})
-            yield await _stream_event("step", {
+            yield _stream_event("step_complete", {
                 "step": "generate",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -233,7 +233,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
                 "output": {"physical_summary": summary, "medical_record": med_record},
             })
         except Exception as e:
-            yield await _stream_event("step", {
+            yield _stream_event("step_error", {
                 "step": "generate",
                 "step_num": step_num,
                 "report_id": report.get("report_id"),
@@ -243,7 +243,7 @@ async def run_pipeline_stream(reports: List[Dict[str, Any]]):
 
     # Done
     graded_dataset = aggregate_grade_dataset(graded_records)
-    yield await _stream_event("done", {
+    yield _stream_event("done", {
         "summary": graded_dataset["summary"],
         "total_reports": len(reports),
         "degraded_count": sum(1 for r in graded_records if r.get("extraction", {}).get("degraded")),
@@ -260,15 +260,15 @@ async def pipeline(request: Request):
 
     # Validate input
     if not isinstance(reports, list):
-        return {"error": "reports must be a list"}
+        return JSONResponse(status_code=400, content={"error": "reports must be a list"})
     if len(reports) == 0:
-        return {"error": "reports cannot be empty"}
+        return JSONResponse(status_code=400, content={"error": "reports cannot be empty"})
 
     # Normalize
     try:
         reports = validate_and_normalize_reports(reports)
     except ValueError as e:
-        return {"error": str(e)}
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
     return StreamingResponse(
         run_pipeline_stream(reports),
@@ -515,27 +515,35 @@ export default function App() {
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
+      let currentEvent = null
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
         buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
 
-        for (const line of lines) {
-          if (line.startsWith('event: ')) {
-            const eventType = line.slice(7).trim()
-            continue
+        // Process complete SSE messages (event: X\ndata: Y\n\n)
+        while (buffer.includes('\n\n')) {
+          const msgEnd = buffer.indexOf('\n\n')
+          const message = buffer.slice(0, msgEnd)
+          buffer = buffer.slice(msgEnd + 2)
+
+          const eventMatch = message.match(/^event: ([^\n]+)\n/)
+          const dataMatch = message.match(/^data: (.+)$/s)  // /s makes . match newlines
+
+          if (eventMatch) {
+            currentEvent = eventMatch[1].trim()
           }
-          if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6))
-            if (data.step) {
+          if (dataMatch && currentEvent) {
+            const data = JSON.parse(dataMatch[1])
+            if (currentEvent === 'step_complete') {
               setSteps(prev => [...prev, data])
-            } else if (data.total) {
-              // start event
-            } else if (data.summary) {
+            } else if (currentEvent === 'step_error') {
+              setSteps(prev => [...prev, data])
+            } else if (currentEvent === 'start') {
+              // start event - data has {total: N}
+            } else if (currentEvent === 'done') {
               setSummary(data)
             }
           }
