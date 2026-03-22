@@ -50,3 +50,6 @@ outputs/
 
 # Logs
 *.log
+
+front-end/node_modules/
+front-end/dist/
