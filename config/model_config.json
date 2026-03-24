@@ -6,11 +6,16 @@
     "api_key_env": "DEEPSEEK_API_KEY",
     "enable_reasoning_qc": true
   },
-  "radgraph": {
+  "indicator_extraction": {
+    "backend": "llm_ie",
+    "llm_timeout_seconds": 6,
+    "notes": "Indicator reports must use llm_ie as primary extraction backend."
+  },
+  "imaging_extraction": {
     "enabled": true,
     "fallback_enabled": true,
-    "model_type": "radgraph-xl",
-    "backend": "radgraph",
-    "notes": "If radgraph is unavailable, fallback parser will be used."
+    "backend": "train_ner",
+    "ner_model_path": "train/models/ner/best_model",
+    "notes": "Chinese imaging extraction uses local trained NER model first and rule fallback."
   }
 }

@@ -53,3 +53,9 @@ outputs/
 
 front-end/node_modules/
 front-end/dist/
+
+
+# 数据集和模型训练相关
+data/datasets/
+train/base-models/
+train/models/

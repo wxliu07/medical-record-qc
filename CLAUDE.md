@@ -11,7 +11,11 @@ This is a Medical QC Framework that processes examination reports through NER/RE
 ## Running the Pipeline
 
 ```bash
+# Backend pipeline (batch processing)
 python main.py
+
+# Frontend API server (interactive processing)
+cd front-end && python api.py
 ```
 
 Output goes to `outputs/<timestamp>/`:
@@ -26,9 +30,11 @@ Set `DEEPSEEK_API_KEY` in `.env` or environment variable. Optional overrides:
 - `DEEPSEEK_MODEL` - Override model name
 - `DEEPSEEK_BASE_URL` - Override API endpoint
 
+The frontend API server runs on `http://127.0.0.1:8000` with endpoint `POST /api/pipeline` accepting SSE streaming responses.
+
 ## Architecture
 
-### Pipeline Flow (main.py:90)
+### Pipeline Flow (main.py:90, front-end/api.py:42)
 ```
 load reports → extract entities → rule QC → LLM reasoning QC → grade → generate documents
 ```
@@ -42,6 +48,14 @@ load reports → extract entities → rule QC → LLM reasoning QC → grade →
 | `modules/dataset/` | Grading logic (正常级/缺失级/矛盾级) |
 | `modules/case_generation/` | Generates summaries and medical records |
 | `modules/data_process/` | Data loading and validation |
+
+### Frontend API Structure (front-end/api.py)
+
+The FastAPI server exposes the same pipeline as a streaming endpoint:
+- `POST /api/pipeline` - Streaming SSE response with step-by-step progress
+- `GET /health` - Health check
+
+Each report generates 6 steps reported via SSE events: `load`, `ner_re`, `rule_qc`, `llm_qc`, `grade`, `generate`.
 
 ### Grading Priority
 矛盾级 > 缺失级 > 正常级
@@ -71,8 +85,14 @@ pytest
 # Run specific test file
 pytest tests/test_imaging_ner_re.py
 
+# Run tests matching a pattern
+pytest -k "test_name_pattern"
+
 # Run with verbose output
 pytest -v
+
+# Run with coverage (if installed)
+pytest --cov=modules --cov-report=term-missing
 ```
 
 Test files use `conftest.py` which adds the project root to `sys.path`.

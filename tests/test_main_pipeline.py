@@ -10,7 +10,7 @@ def test_run_pipeline_with_mocks(monkeypatch, tmp_path: Path) -> None:
         "load_config",
         lambda _: {
             "qc_rules": {"completeness": {"required_fields": ["描述", "检查所见", "检查提示"]}},
-            "model_config": {"llm": {}, "radgraph": {}},
+            "model_config": {"llm": {}, "imaging_extraction": {"enabled": True, "fallback_enabled": True}},
         },
     )
 
@@ -19,14 +19,14 @@ def test_run_pipeline_with_mocks(monkeypatch, tmp_path: Path) -> None:
             "report_id": "R-1",
             "report_type": "指标类",
             "report_subtype": "血常规",
-            "content": {"描述": "a", "检查所见": "白细胞计数6.0 10^9/L", "检查提示": "正常"},
+            "content": {"描述": "男，36岁，体检复查。", "检查所见": "白细胞计数6.0 10^9/L。", "检查提示": "未见明显异常。"},
             "label": "正常",
         },
         {
             "report_id": "R-2",
             "report_type": "影像类",
             "report_subtype": "CT",
-            "content": {"描述": "b", "检查所见": "未见异常", "检查提示": "未见异常"},
+            "content": {"描述": "胸部CT复查。", "检查所见": "双肺纹理清晰，未见明显结节。", "检查提示": "未见明显异常。"},
             "label": "正常",
         },
     ]

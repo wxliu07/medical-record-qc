@@ -1,7 +1,11 @@
 import json
 import os
 import re
+from multiprocessing import get_context
 from typing import Any, Dict, List
+
+
+_LLM_BACKEND_ERROR: str = ""
 
 
 def _build_text(report: Dict[str, Any]) -> str:
@@ -13,6 +17,49 @@ def _build_text(report: Dict[str, Any]) -> str:
             f"检查提示: {c.get('检查提示', '')}",
         ]
     )
+
+
+def _parse_llm_json(content: str) -> Dict[str, Any]:
+    text = content.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        left = text.find("{")
+        right = text.rfind("}")
+        if left != -1 and right != -1 and right > left:
+            return json.loads(text[left : right + 1])
+        raise
+
+
+def _extract_frame_content(frame: Any) -> str:
+    for attr in ["gen_text", "generated_text", "output", "content"]:
+        value = getattr(frame, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    if hasattr(frame, "get_generated_text"):
+        try:
+            value = frame.get_generated_text()
+            if isinstance(value, str) and value.strip():
+                return value
+        except Exception:
+            pass
+
+    if hasattr(frame, "frame") and isinstance(getattr(frame, "frame", None), dict):
+        return json.dumps(frame.frame, ensure_ascii=False)
+
+    if hasattr(frame, "data") and isinstance(getattr(frame, "data", None), dict):
+        return json.dumps(frame.data, ensure_ascii=False)
+
+    return str(frame)
 
 
 def _extract_with_regex(report: Dict[str, Any], qc_rules: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,11 +144,20 @@ def _extract_with_llm(report: Dict[str, Any], model_config: Dict[str, Any]) -> D
 {{text}}
 """
 
-    engine = LiteLLMInferenceEngine(
-        model=llm_cfg.get("model", "deepseek/deepseek-chat"),
-        api_key=api_key,
-        base_url=llm_cfg.get("base_url", "https://api.deepseek.com/v1"),
-    )
+    engine_kwargs = {
+        "model": llm_cfg.get("model", "deepseek/deepseek-chat"),
+        "api_key": api_key,
+        "base_url": llm_cfg.get("base_url", "https://api.deepseek.com/v1"),
+        "timeout": float(llm_cfg.get("timeout", 20)),
+    }
+    try:
+        engine = LiteLLMInferenceEngine(**engine_kwargs)
+    except TypeError as exc:
+        # 兼容旧版 llm-ie：LiteLLMInferenceEngine 可能不支持 timeout 参数
+        if "unexpected keyword argument 'timeout'" not in str(exc):
+            raise
+        engine_kwargs.pop("timeout", None)
+        engine = LiteLLMInferenceEngine(**engine_kwargs)
     extractor = DirectFrameExtractor(
         inference_engine=engine,
         unit_chunker=SentenceUnitChunker(),
@@ -112,34 +168,41 @@ def _extract_with_llm(report: Dict[str, Any], model_config: Dict[str, Any]) -> D
     if not frames:
         raise RuntimeError("llm-ie returned empty frames")
 
-    frame = frames[0]
-    content = None
-    for attr in ["gen_text", "generated_text", "output", "content"]:
-        val = getattr(frame, attr, None)
-        if isinstance(val, str) and val.strip():
-            content = val
-            break
-    if content is None and hasattr(frame, "get_generated_text"):
-        try:
-            content = frame.get_generated_text()
-        except Exception:
-            content = None
-    if content is None:
-        content = str(frame)
-
-    clean = content.strip()
-    if clean.startswith("```json"):
-        clean = clean[7:]
-    elif clean.startswith("```"):
-        clean = clean[3:]
-    if clean.endswith("```"):
-        clean = clean[:-3]
-
-    result = json.loads(clean.strip())
+    content = _extract_frame_content(frames[0])
+    result = _parse_llm_json(content)
     result.setdefault("source", "llm_ie")
     result.setdefault("degraded", False)
     result.setdefault("raw_output", content)
     return result
+
+
+def _llm_worker(report: Dict[str, Any], model_config: Dict[str, Any], queue: Any) -> None:
+    try:
+        result = _extract_with_llm(report, model_config)
+        queue.put({"ok": True, "result": result})
+    except Exception as exc:
+        queue.put({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
+
+
+def _extract_with_llm_timeout(report: Dict[str, Any], model_config: Dict[str, Any], timeout_seconds: float) -> Dict[str, Any]:
+    ctx = get_context("spawn")
+    queue = ctx.Queue(maxsize=1)
+    proc = ctx.Process(target=_llm_worker, args=(report, model_config, queue), daemon=True)
+    proc.start()
+    proc.join(timeout_seconds)
+
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=3)
+        raise TimeoutError(f"indicator llm_ie timeout after {timeout_seconds}s")
+
+    if queue.empty():
+        raise RuntimeError("indicator llm_ie worker exited without result")
+
+    payload = queue.get()
+    if payload.get("ok"):
+        return payload["result"]
+    raise RuntimeError(str(payload.get("error", "indicator llm_ie failed")))
 
 
 def extract_indicator_ner_re(
@@ -147,9 +210,21 @@ def extract_indicator_ner_re(
     qc_rules: Dict[str, Any],
     model_config: Dict[str, Any],
 ) -> Dict[str, Any]:
+    global _LLM_BACKEND_ERROR
+
+    indicator_cfg = model_config.get("indicator_extraction", {})
+    timeout_seconds = float(indicator_cfg.get("llm_timeout_seconds", 6))
+
+    # llm_ie 在当前进程已判定不可用时，避免每条报告重复等待超时。
+    if _LLM_BACKEND_ERROR:
+        fallback = _extract_with_regex(report, qc_rules)
+        fallback["error"] = f"llm_ie unavailable in current run: {_LLM_BACKEND_ERROR}"
+        return fallback
+
     try:
-        return _extract_with_llm(report, model_config)
+        return _extract_with_llm_timeout(report, model_config, timeout_seconds=timeout_seconds)
     except Exception as exc:
+        _LLM_BACKEND_ERROR = str(exc)
         fallback = _extract_with_regex(report, qc_rules)
         fallback["error"] = str(exc)
         return fallback

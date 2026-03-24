@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show:*)",
+      "Bash(python -c \"from radgraph import RadGraph; import inspect; print\\(inspect.signature\\(RadGraph.__init__\\)\\)\")",
+      "Bash(ls -la \"e:\\\\Codes\\\\electronic-record\\\\train\"\" 2>/dev/null || echo \"train folder not found or empty \")",
+      "Bash(ls -la \"e:\\\\Codes\\\\electronic-record\\\\data\\\\datasets\"\" 2>/dev/null || echo \"data/datasets folder not found or empty \")"
+    ]
+  }
+}

@@ -31,6 +31,29 @@ def _check_completeness(content: Dict[str, Any], qc_rules: Dict[str, Any]) -> Li
     return issues
 
 
+def _check_extraction_degradation(report_type: str, extraction: Dict[str, Any]) -> List[Issue]:
+    issues: List[Issue] = []
+    degraded = bool(extraction.get("degraded", False))
+    if not degraded:
+        return issues
+
+    source = str(extraction.get("source", "unknown"))
+    error = str(extraction.get("error", "")).strip()
+
+    if report_type == "影像类":
+        issues.append(
+            _new_issue(
+                issue_type="缺失",
+                severity="high",
+                message="影像抽取降级，需人工复核后再生成正式病历",
+                evidence={"source": source, "error": error},
+                source="system",
+            )
+        )
+
+    return issues
+
+
 def _indicator_conflicts(extraction: Dict[str, Any], qc_rules: Dict[str, Any]) -> List[Issue]:
     issues: List[Issue] = []
     indicator_rules = qc_rules.get("indicator", {}).get("ranges", {})
@@ -95,8 +118,11 @@ def _imaging_conflicts(report: Dict[str, Any], extraction: Dict[str, Any], qc_ru
     normal_keywords = img_rules.get("normal_keywords", [])
     abnormal_keywords = img_rules.get("abnormal_keywords", [])
 
+    # Check if impression contains any normal keyword - if so, it's not abnormal
+    impression_normal = any(k in impression for k in normal_keywords)
     findings_normal = any(k in findings for k in normal_keywords)
-    impression_abnormal = any(k in impression for k in abnormal_keywords)
+    # Only flag as abnormal if impression is NOT normal AND contains abnormal keywords
+    impression_abnormal = not impression_normal and any(k in impression for k in abnormal_keywords)
     if findings_normal and impression_abnormal:
         issues.append(
             _new_issue(
@@ -130,6 +156,8 @@ def run_rule_based_qc(report: Dict[str, Any], extraction: Dict[str, Any], qc_rul
     issues.extend(_check_completeness(content, qc_rules))
 
     report_type = report.get("report_type")
+    issues.extend(_check_extraction_degradation(str(report_type), extraction))
+
     if report_type == "指标类":
         issues.extend(_indicator_conflicts(extraction, qc_rules))
     elif report_type == "影像类":

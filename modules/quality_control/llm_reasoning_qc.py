@@ -71,9 +71,10 @@ def run_llm_reasoning_qc(
     model_config: Dict[str, Any],
 ) -> Dict[str, Any]:
     llm_cfg = model_config.get("llm", {})
+    degraded = bool(extraction.get("degraded", False))
 
     # Fast path: for clean reports, avoid network/model calls to reduce blocking risk.
-    if not rule_issues and llm_cfg.get("reasoning_on_clean_reports", False) is False:
+    if not rule_issues and not degraded and llm_cfg.get("reasoning_on_clean_reports", False) is False:
         return {
             "result": "correct",
             "reason": "rule fastpath: no issues",
@@ -87,14 +88,7 @@ def run_llm_reasoning_qc(
     if not api_key:
         return _rule_reasoning_fallback(rule_issues, "missing DEEPSEEK_API_KEY")
 
-    try:
-        from llm_ie.chunkers import SentenceUnitChunker
-        from llm_ie.engines import LiteLLMInferenceEngine
-        from llm_ie.extractors import DirectFrameExtractor
-    except Exception as exc:
-        return _rule_reasoning_fallback(rule_issues, f"llm-ie unavailable: {exc}")
-
-        prompt = """
+    prompt = """
 你是医疗报告质控复核助手。请基于输入信息判断当前结论是否合理。
 仅输出严格 JSON，不要附加任何解释文本：
 {
@@ -106,6 +100,13 @@ def run_llm_reasoning_qc(
 {{text}}
 """
 
+    try:
+        from llm_ie.chunkers import SentenceUnitChunker
+        from llm_ie.engines import LiteLLMInferenceEngine
+        from llm_ie.extractors import DirectFrameExtractor
+    except Exception as exc:
+        return _rule_reasoning_fallback(rule_issues, f"llm-ie unavailable: {exc}")
+
     reasoning_input = json.dumps(
         {
             "report": report,
@@ -116,12 +117,20 @@ def run_llm_reasoning_qc(
     )
 
     try:
-        engine = LiteLLMInferenceEngine(
-            model=llm_cfg.get("model", "deepseek/deepseek-chat"),
-            api_key=api_key,
-            base_url=llm_cfg.get("base_url", "https://api.deepseek.com/v1"),
-            timeout=float(llm_cfg.get("timeout", 20)),
-        )
+        engine_kwargs = {
+            "model": llm_cfg.get("model", "deepseek/deepseek-chat"),
+            "api_key": api_key,
+            "base_url": llm_cfg.get("base_url", "https://api.deepseek.com/v1"),
+            "timeout": float(llm_cfg.get("timeout", 20)),
+        }
+        try:
+            engine = LiteLLMInferenceEngine(**engine_kwargs)
+        except TypeError as exc:
+            # 兼容旧版 llm-ie：LiteLLMInferenceEngine 可能不支持 timeout 参数
+            if "unexpected keyword argument 'timeout'" not in str(exc):
+                raise
+            engine_kwargs.pop("timeout", None)
+            engine = LiteLLMInferenceEngine(**engine_kwargs)
         extractor = DirectFrameExtractor(
             inference_engine=engine,
             unit_chunker=SentenceUnitChunker(),

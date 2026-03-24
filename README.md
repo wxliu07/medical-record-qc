@@ -79,6 +79,73 @@ python main.py
 - medical_records.json
 - run_summary.json
 
+## outputs 文件说明
+
+### 目录层级
+- outputs 下每个子目录（例如 20260324_213358）代表一次完整流水线运行。
+- 子目录名是运行时间戳，格式为 YYYYMMDD_HHMMSS。
+- 同一时间戳目录内保存该次运行的全部结果，方便回溯和对比。
+
+### run_summary.json（运行摘要）
+作用：用于快速查看本次运行是否成功、处理了多少报告、分级分布和降级情况。
+
+主要字段：
+- output_dir：本次输出目录绝对路径。
+- summary：分级统计，通常包含 正常级、缺失级、矛盾级 的数量。
+- total_reports：本次处理的报告总数。
+- degraded_count：抽取阶段发生降级的报告数（例如模型不可用、超时后走 fallback）。
+
+### graded_dataset.json（核心分级数据集）
+作用：保存每条报告从原始内容到抽取、质控、推理、最终分级的完整中间信息，是最重要的审计文件。
+
+顶层字段：
+- summary：本次分级汇总。
+- records：逐条报告记录数组。
+
+records 中每条通常包含：
+- report_id、report_type、report_subtype：报告标识与类型。
+- original_label：输入数据原始标签。
+- grade_label：系统最终分级标签。
+- content：原始三段内容（描述、检查所见、检查提示）。
+- extraction：NER/RE 抽取结果。
+	- entities：抽取实体（指标类常见 指标 列表，影像类常见 nodes/edges 对应实体信息）。
+	- relations：抽取关系。
+	- source：抽取来源（例如 llm_ie、train_ner_imaging、regex_fallback、fallback_imaging_parser）。
+	- degraded：是否降级。
+	- error：降级或失败原因（若有）。
+- qc_issues：规则质控发现的问题列表（缺失/矛盾等）。
+- reasoning：LLM 推理质控结果（result、reason、source）。
+
+### physical_summaries.json（体检总结结果）
+作用：面向展示的简要体检总结输出。
+
+每条通常包含：
+- report_id：报告 ID。
+- generated：是否生成成功。
+- summary：生成的体检总结文本（generated 为 true 时非空）。
+- note：未生成原因说明（例如存在质控问题，需先修正）。
+
+### medical_records.json（标准化病历结果）
+作用：面向业务落地的结构化病历输出。
+
+每条通常包含：
+- report_id：报告 ID。
+- generated：是否生成正式病历。
+- record：标准化病历主体（患者信息、检查结果、异常提示、建议等）。
+- pending_issues：未通过质控时的待处理问题清单。
+- note：未生成正式病历的原因说明。
+
+### 四个文件之间的关系
+- run_summary.json：看总体运行结果。
+- graded_dataset.json：看全量明细与可追溯证据。
+- physical_summaries.json：看面向体检摘要的输出。
+- medical_records.json：看面向标准病历的输出。
+
+建议排查顺序：
+1. 先看 run_summary.json 判断是否大面积降级。
+2. 再看 graded_dataset.json 定位具体报告的 extraction、qc_issues、reasoning。
+3. 最后看 physical_summaries.json 和 medical_records.json 的 generated 与 note，判断是否可直接用于展示/下游。
+
 ## 分级逻辑
 - 正常级：无缺失且无逻辑矛盾
 - 缺失级：存在关键字段缺失
