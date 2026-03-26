@@ -15,7 +15,7 @@ This is a Medical QC Framework that processes examination reports through NER/RE
 python main.py
 
 # Frontend API server (interactive processing)
-cd front-end && python api.py
+python api.py
 ```
 
 Output goes to `outputs/<timestamp>/`:
@@ -34,7 +34,7 @@ The frontend API server runs on `http://127.0.0.1:8000` with endpoint `POST /api
 
 ## Architecture
 
-### Pipeline Flow (main.py:90, front-end/api.py:42)
+### Pipeline Flow (main.py:122, api.py:42)
 ```
 load reports → extract entities → rule QC → LLM reasoning QC → grade → generate documents
 ```
